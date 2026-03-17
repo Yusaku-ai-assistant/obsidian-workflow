@@ -1,0 +1,8 @@
+{
+  "name": "obsidian-workflow",
+  "version": "0.1.0",
+  "description": "Obsidian Vaultの情報収集ワークフローを自動化するプラグイン。Web Clipperで収集したMDファイルの整理・要約・日次まとめ生成を行う。",
+  "author": {
+    "name": "ゆうさく"
+  }
+}
