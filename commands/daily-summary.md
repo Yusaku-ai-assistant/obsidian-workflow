@@ -10,18 +10,51 @@
 
 ---
 
+## 処理フロー概要
+
+```
+1. 00_Inbox の md を列挙
+2. 既処理・重複判定（processed: true のファイルを除外）
+3. frontmatter補完（欠損フィールドを優先順位に従い補完）
+4. タグ付与（ジャンル・重要度・ソース）
+5. 処理済みマーク付与（processed: true 等をfrontmatterに追記）
+6. 記事要約生成 → 02_DailySummary/YYYYMMDD.md に書き込み
+7. 99_Logs/YYYYMMDD.md にログ記録
+8. 01_Clips/YYYYMMDD/ にファイル移動
+9. 失敗したファイルは 00_Inbox に残し、ログに記録
+```
+
+---
+
 ## 処理手順（必ずこの順番で実行すること）
 
 ### Step 1：Inboxの全MDファイルを読み込む
 
 - `00_Inbox` 内の全MDファイルを読み込む
 - 各ファイルからfrontmatterと本文を取得する
-- frontmatterがない場合はファイル名・本文から情報を補完する
 
-### Step 1.5：各MDファイルにタグを付与する（Step 1の直後に実行）
+### Step 1.1：既処理・重複判定
+
+- `processed: true` がfrontmatterにあるファイルは **スキップ**（ログに「既処理スキップ」として記録）
+- 同日の処理済み記事と `source:` URLが完全一致するファイルは **スキップ**（ログに「重複スキップ」として記録）
+- `title:` と `date:` が共に一致するファイルも **スキップ**
+
+### Step 1.2：frontmatter補完
+
+frontmatterが欠損・不完全な場合、daily-summaryスキルの補完ルールに従い補完する。
+
+- title: frontmatter.title → 本文の最初のH1 → ファイル名 → 本文冒頭1文（50字まで）
+- source: frontmatter.source → 本文中の最初のURL → 空欄
+- date: frontmatter.date → ファイル名中の日付パターン → 処理実行日
+- tags: frontmatter.tags → `[]` で初期化
+
+frontmatter自体がない場合は、ファイル先頭に `---` ブロックごと生成する。
+
+### Step 1.5：各MDファイルにタグを付与する
 
 各クリップMDファイルの本文を読んで内容を判断し、frontmatterの `tags:` に以下の形式でタグを書き込む。
 **タグは必ずStep 3でファイルを移動する前に書き込むこと。**
+**タグ判定基準はdaily-summaryスキルのタグ体系セクションを必ず参照すること。**
 
 ```yaml
 tags:
@@ -30,19 +63,29 @@ tags:
   - ソース/SNS     # ソースは1つだけ
 ```
 
-**タグの選択基準（daily-summaryスキルのタグ体系を参照すること）**
-
-- ジャンル：`ジャンル/AI` `ジャンル/テック` `ジャンル/ビジネス` `ジャンル/セキュリティ` `ジャンル/ネットワーク` `ジャンル/ツール`
-- 重要度：`重要度/高` `重要度/中` `重要度/低`
-- ソース：`ソース/公式` `ソース/ブログ` `ソース/ニュース` `ソース/SNS`
-
 タグ付けの方法：各MDファイルのfrontmatterを開き、`tags: []` の行を上記YAML形式に置き換えて上書き保存する。
+
+### Step 1.6：処理済みマークを付与する
+
+タグ付与完了後、各MDファイルのfrontmatterに以下を追記する：
+
+```yaml
+processed: true
+processed_at: "YYYY-MM-DDTHH:MM"
+summary_date: "YYYYMMDD"
+```
+
+**これにより、再実行時にStep 1.1で自動的に除外される。**
 
 ---
 
 ### Step 2：02_DailySummary/YYYYMMDD.md を生成する
 
 YYYYMMDDは処理実行日。**ファイルが存在するかどうかで処理を分岐する。**
+
+#### 追記時の重複チェック
+
+パターンBで追記する場合、既存のDailySummaryファイル内に同じ `source:` URLの記事が既に掲載されていないか確認する。掲載済みの記事はスキップし、ログに記録する。
 
 #### 字数制限（全体）
 **1ファイルあたり1〜5万字に収めること。**
@@ -240,22 +283,38 @@ tags:
 *追記日時: YYYY-MM-DD HH:MM / 追記ファイル数: N件*
 ```
 
-### Step 3：00_InboxのファイルをO1_Clipsに移動する
+### Step 3：00_Inboxのファイルを01_Clipsに移動する
 
 - `01_Clips/YYYYMMDD/` フォルダを作成（存在する場合はスキップ）
-- `00_Inbox` 内の全MDファイルを `01_Clips/YYYYMMDD/` に移動
-- 移動後に `00_Inbox` が空であることを確認する
+- **処理成功したファイルのみ** `01_Clips/YYYYMMDD/` に移動（失敗したファイルは 00_Inbox に残す）
+- 移動後に `00_Inbox` の残ファイルを確認する
+- 残ファイルがある場合は完了報告に記載する
 
 ### Step 4：99_Logs/YYYYMMDD.md にログを記録する
+
+ログは既存ファイルがあれば追記、なければ新規作成する。
 
 ```markdown
 ## YYYY-MM-DD HH:MM 処理ログ
 
 - **コマンド**: /daily-summary
-- **処理ファイル数**: N件
-- **生成ファイル**: 02_DailySummary/YYYYMMDD.md
+- **処理対象ファイル数**: N件
+- **成功**: N件
+- **スキップ（既処理）**: N件
+- **スキップ（重複）**: N件
+- **失敗**: N件
+- **生成ファイル**: 02_DailySummary/YYYYMMDD.md（新規 or 追記）
 - **アーカイブ先**: 01_Clips/YYYYMMDD/
-- **エラー**: なし
+
+### ファイル別処理結果
+
+| ファイル名 | 結果 | 備考 |
+|---|---|---|
+| article1.md | ✅ 成功 | 重要度/高 |
+| article2.md | ✅ 成功 | 重要度/中 |
+| article3.md | ⏭ スキップ | 既処理（processed: true） |
+| article4.md | ⏭ スキップ | 重複（source URL一致） |
+| article5.md | ❌ 失敗 | 読み込みエラー |
 ```
 
 ---
@@ -264,16 +323,29 @@ tags:
 
 ```
 ✅ daily-summary 完了
-- 処理した記事: N件
+- 処理した記事: N件（成功N / スキップN / 失敗N）
 - まとめ: 02_DailySummary/YYYYMMDD.md
 - アーカイブ: 01_Clips/YYYYMMDD/
 - ログ: 99_Logs/YYYYMMDD.md
 ```
 
+失敗やスキップがある場合は理由を簡潔に報告する。
+
 ## エラー処理
 
 | 状況 | 対応 |
 |---|---|
-| ファイル読み込み失敗 | スキップして他を処理、ログに記録 |
-| DailySummaryが既に存在 | 末尾に追記（上書きしない） |
+| ファイル読み込み失敗 | スキップして他を処理、ログに記録、ファイルは00_Inboxに残す |
+| frontmatter欠損 | 補完ルールに従い補完してから処理を続行 |
+| DailySummaryが既に存在 | 末尾に追記（上書きしない）。追記前にsource URL重複チェック |
 | 01_Clips移動失敗 | まとめは保存済み、エラーをログに記録しユーザーに通知 |
+| 全件失敗 | DailySummaryは生成しない、ログに全件の失敗理由を記録 |
+
+## 再実行時の動作
+
+再実行しても安全に動作する。具体的には：
+
+- `processed: true` のファイルはStep 1.1で自動除外される
+- DailySummaryへの追記時はsource URLで重複チェックされる
+- 01_Clipsに既に存在するファイルは移動をスキップする
+- ログは追記モードで既存ログを上書きしない
